@@ -1,77 +1,80 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import date
-import os
 
-# Nombre del archivo donde guardaremos todo
-DB_FILE = "datos_habitos.csv"
+# --- CONFIGURACIÓN DE LA APP ---
+st.set_page_config(page_title="Mi Habit Tracker Pro", page_icon="🔥")
 
-# --- FUNCIÓN PARA CARGAR DATOS ---
-def cargar_datos():
-    if os.path.exists(DB_FILE):
-        return pd.read_csv(DB_FILE)
-    else:
-        # Si no existe, creamos un DataFrame vacío con columnas
-        return pd.DataFrame(columns=["Fecha", "Habito", "Completado"])
+st.title("Habit Tracker con Memoria 🧠☁️")
 
-# --- FUNCIÓN PARA GUARDAR DATOS ---
-def guardar_progreso(fecha, habitos_estado):
-    df = cargar_datos()
-    # Filtramos para no duplicar datos del mismo día si ya existen
-    df = df[df['Fecha'] != str(fecha)]
-    
-    # Creamos los nuevos datos
-    nuevos_datos = []
-    for habito, estado in habitos_estado.items():
-        nuevos_datos.append({"Fecha": str(fecha), "Habito": habito, "Completado": estado})
-    
-    # Unimos y guardamos
-    df_actualizado = pd.concat([df, pd.DataFrame(nuevos_datos)], ignore_index=True)
-    df_actualizado.to_csv(DB_FILE, index=False)
-    st.success("¡Progreso guardado en el disco!")
+# 1. CONEXIÓN A GOOGLE SHEETS
+# Nota: Debes configurar el enlace de tu Google Sheet en .streamlit/secrets.toml
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    df_historico = conn.read()
+except Exception:
+    # Si falla la conexión (por falta de configuración), crea un DF vacío para no romper la app
+    df_historico = pd.DataFrame(columns=["Fecha", "Habito", "Completado"])
 
-# --- INTERFAZ ---
-st.title("Habit Tracker con Memoria 🧠")
-
+# --- INTERFAZ DE REGISTRO DIARIO ---
 hoy = date.today()
-habitos_lista = ["Hacer ejercicio", "Leer", "Meditar","Devocional","bebr agua","estudiar","ayudar en la casa", "trabajar","Orar"]
+habitos_lista = [
+    "Hacer ejercicio", "Leer", "Meditar", "Devocional", 
+    "Beber agua", "Estudiar", "Ayudar en la casa", "Trabajar", "Orar"
+]
+
+st.subheader(f"Tareas para hoy: {hoy.strftime('%d/%m/%Y')}")
+
+# Usamos columnas para que los checkboxes se vean más ordenados
+cols = st.columns(2)
 estados = {}
 
-# Mostrar checkboxes
-for h in habitos_lista:
-    estados[h] = st.checkbox(h, key=h)
+for i, h in enumerate(habitos_lista):
+    col = cols[i % 2] # Alterna entre columna 1 y 2
+    estados[h] = col.checkbox(h, key=h)
 
-# Botón para guardar manualmente
-if st.button("Guardar mi día"):
-    guardar_progreso(hoy, estados)
+# Botón para guardar en la nube
+if st.button("Guardar mi día en la nube ☁️"):
+    # Preparamos los nuevos datos
+    nuevas_filas = pd.DataFrame([
+        {"Fecha": str(hoy), "Habito": h, "Completado": estados[h]} for h in habitos_lista
+    ])
+    
+    # Filtramos el historial para eliminar registros viejos del mismo día (evitar duplicados)
+    if not df_historico.empty:
+        df_historico = df_historico[df_historico['Fecha'] != str(hoy)]
+    
+    # Unimos lo viejo con lo nuevo
+    df_actualizado = pd.concat([df_historico, nuevas_filas], ignore_index=True)
+    
+    # SUBIR A GOOGLE SHEETS
+    conn.update(data=df_actualizado)
+    st.success("¡Progreso guardado y sincronizado!")
+    st.balloons()
 
-# --- MOSTRAR HISTORIAL ---
+# --- SECCIÓN DE RESUMEN ---
 st.divider()
-st.subheader("Tu historial guardado")
-datos_historicos = cargar_datos()
-st.dataframe(datos_historicos)
 
+def mostrar_resumen_semanal(datos):
+    if datos.empty:
+        st.warning("No hay datos suficientes para mostrar estadísticas.")
+        return
 
-
-
-# --- FUNCIÓN PARA CARGAR Y PROCESAR SEMANA ---
-def mostrar_resumen_semanal():
-    df = pd.read_csv("datos_habitos.csv")
-    
-    # Convertir la columna Fecha a formato de fecha real para que Python la entienda
+    # Convertir fechas y calcular semana
+    df = datos.copy()
     df['Fecha'] = pd.to_datetime(df['Fecha'])
-    
-    # Obtener el número de la semana actual
     semana_actual = date.today().isocalendar()[1]
     df['Semana'] = df['Fecha'].dt.isocalendar().week
     
-    # Filtrar solo los datos de esta semana
-    datos_semana = df[df['Semana'] == semana_actual]
+    # Filtrar semana actual
+    df_semana = df[df['Semana'] == semana_actual]
 
-    if not datos_semana.empty:
-        # Calcular porcentaje por día
-        # Agrupamos por fecha y calculamos el promedio de "Completado"
-        resumen = datos_semana.groupby(datos_semana['Fecha'].dt.strftime('%A'))['Completado'].mean() * 100
+    if not df_semana.empty:
+        # Agrupar por nombre de día
+        # Aseguramos que 'Completado' sea numérico para sacar el promedio
+        df_semana['Completado'] = df_semana['Completado'].astype(int)
+        resumen = df_semana.groupby(df_semana['Fecha'].dt.day_name())['Completado'].mean() * 100
         
         st.write("### 📊 Balance de la Semana")
         st.bar_chart(resumen)
@@ -79,17 +82,18 @@ def mostrar_resumen_semanal():
         promedio_total = resumen.mean()
         st.metric("Cumplimiento total semanal", f"{promedio_total:.0f}%")
     else:
-        st.warning("Aún no hay datos guardados para esta semana.")
+        st.info("Aún no tienes registros de esta semana.")
 
-# --- LÓGICA PARA MOSTRARLO SOLO LOS DOMINGOS ---
-hoy = date.today()
-es_domingo = hoy.weekday() == 6 # En Python, 6 es Domingo
+# Lógica de visualización (Domingo o Botón)
+es_domingo = hoy.weekday() == 6
 
 if es_domingo:
     st.header("¡Es Domingo! 🍎")
-    st.subheader("Aquí tienes el resumen de tu esfuerzo:")
-    mostrar_resumen_semanal()
+    mostrar_resumen_semanal(df_historico)
 else:
-    # Si no es domingo, podemos poner un botón opcional para "ver cómo voy"
-    if st.sidebar.button("Ver avance semanal anticipado"):
-        mostrar_resumen_semanal()
+    with st.expander("Ver avance semanal anticipado"):
+        mostrar_resumen_semanal(df_historico)
+
+# Mostrar tabla de datos crudos (opcional)
+if st.sidebar.checkbox("Mostrar historial completo"):
+    st.sidebar.write(df_historico)
