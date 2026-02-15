@@ -35,23 +35,25 @@ for i, h in enumerate(habitos_lista):
     estados[h] = col.checkbox(h, key=h)
 
 # Botón para guardar en la nube
-if st.button("Guardar mi día en la nube ☁️"):
-    # Preparamos los nuevos datos
+# Conexión profesional con Service Account (configurada en Secrets)
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Cargar datos (Esto ahora leerá usando la llave privada)
+df_historico = conn.read(worksheet="Hoja 1") 
+
+# ... (resto de tus checkboxes) ...
+
+if st.button("Guardar en mi Celular 📱"):
     nuevas_filas = pd.DataFrame([
         {"Fecha": str(hoy), "Habito": h, "Completado": estados[h]} for h in habitos_lista
     ])
     
-    # Filtramos el historial para eliminar registros viejos del mismo día (evitar duplicados)
-    if not df_historico.empty:
-        df_historico = df_historico[df_historico['Fecha'] != str(hoy)]
-    
-    # Unimos lo viejo con lo nuevo
+    # Limpiar duplicados y unir
     df_actualizado = pd.concat([df_historico, nuevas_filas], ignore_index=True)
     
-    # SUBIR A GOOGLE SHEETS
-    conn.update(data=df_actualizado)
-    st.success("¡Progreso guardado y sincronizado!")
-    st.balloons()
+    # ACTUALIZAR (Ahora sí funcionará porque tienes la Service Account)
+    conn.update(worksheet="Hoja 1", data=df_actualizado)
+    st.success("¡Guardado! Ya puedes cerrar la app.")
 
 # --- SECCIÓN DE RESUMEN ---
 st.divider()
@@ -93,6 +95,7 @@ if es_domingo:
 else:
     with st.expander("Ver avance semanal anticipado"):
         mostrar_resumen_semanal(df_historico)
+
 
 # Mostrar tabla de datos crudos (opcional)
 if st.sidebar.checkbox("Mostrar historial completo"):
