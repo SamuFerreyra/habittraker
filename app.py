@@ -2,101 +2,85 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import date
+import os
 
-# --- CONFIGURACIÓN DE LA APP ---
 st.set_page_config(page_title="Mi Habit Tracker Pro", page_icon="🔥")
-
 st.title("Habit Tracker con Memoria 🧠☁️")
 
-# 1. CONEXIÓN A GOOGLE SHEETS
-# Nota: Debes configurar el enlace de tu Google Sheet en .streamlit/secrets.toml
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    df_historico = conn.read()
-except Exception:
-    # Si falla la conexión (por falta de configuración), crea un DF vacío para no romper la app
-    df_historico = pd.DataFrame(columns=["Fecha", "Habito", "Completado"])
-
-# --- INTERFAZ DE REGISTRO DIARIO ---
-hoy = date.today()
+# --- LISTA DE HÁBITOS ---
 habitos_lista = [
     "Hacer ejercicio", "Leer", "Meditar", "Devocional", 
     "Beber agua", "Estudiar", "Ayudar en la casa", "Trabajar", "Orar"
 ]
 
+# --- INTENTO DE CONEXIÓN ---
+df_historico = pd.DataFrame(columns=["Fecha", "Habito", "Completado"])
+modo_nube = False
+
+try:
+    # Intentamos conectar con Google Sheets
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    # IMPORTANTE: Cambié el nombre de la hoja al que vi en tu captura
+    df_historico = conn.read(worksheet="Configuración del Admin de Django")
+    modo_nube = True
+except Exception:
+    # Si falla (en local sin secretos), intentamos cargar el CSV local
+    if os.path.exists("datos_habitos.csv"):
+        df_historico = pd.read_csv("datos_habitos.csv")
+    st.info("💡 Nota: Usando almacenamiento local (CSV). Configura Secrets para la nube.")
+
+# --- INTERFAZ DE USUARIO ---
+hoy = date.today()
 st.subheader(f"Tareas para hoy: {hoy.strftime('%d/%m/%Y')}")
 
-# Usamos columnas para que los checkboxes se vean más ordenados
 cols = st.columns(2)
 estados = {}
-
 for i, h in enumerate(habitos_lista):
-    col = cols[i % 2] # Alterna entre columna 1 y 2
+    col = cols[i % 2]
     estados[h] = col.checkbox(h, key=h)
 
-# Botón para guardar en la nube
-# Conexión profesional con Service Account (configurada en Secrets)
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# Cargar datos (Esto ahora leerá usando la llave privada)
-df_historico = conn.read(worksheet="Hoja 1") 
-
-# ... (resto de tus checkboxes) ...
-
-if st.button("Guardar en mi Celular 📱"):
+# --- BOTÓN DE GUARDADO ---
+if st.button("Guardar mi día 📱"):
+    # Preparamos los nuevos datos
     nuevas_filas = pd.DataFrame([
         {"Fecha": str(hoy), "Habito": h, "Completado": estados[h]} for h in habitos_lista
     ])
     
-    # Limpiar duplicados y unir
-    df_actualizado = pd.concat([df_historico, nuevas_filas], ignore_index=True)
-    
-    # ACTUALIZAR (Ahora sí funcionará porque tienes la Service Account)
-    conn.update(worksheet="Hoja 1", data=df_actualizado)
-    st.success("¡Guardado! Ya puedes cerrar la app.")
-
-# --- SECCIÓN DE RESUMEN ---
-st.divider()
-
-def mostrar_resumen_semanal(datos):
-    if datos.empty:
-        st.warning("No hay datos suficientes para mostrar estadísticas.")
-        return
-
-    # Convertir fechas y calcular semana
-    df = datos.copy()
-    df['Fecha'] = pd.to_datetime(df['Fecha'])
-    semana_actual = date.today().isocalendar()[1]
-    df['Semana'] = df['Fecha'].dt.isocalendar().week
-    
-    # Filtrar semana actual
-    df_semana = df[df['Semana'] == semana_actual]
-
-    if not df_semana.empty:
-        # Agrupar por nombre de día
-        # Aseguramos que 'Completado' sea numérico para sacar el promedio
-        df_semana['Completado'] = df_semana['Completado'].astype(int)
-        resumen = df_semana.groupby(df_semana['Fecha'].dt.day_name())['Completado'].mean() * 100
-        
-        st.write("### 📊 Balance de la Semana")
-        st.bar_chart(resumen)
-        
-        promedio_total = resumen.mean()
-        st.metric("Cumplimiento total semanal", f"{promedio_total:.0f}%")
+    # Unir con lo anterior evitando duplicados de hoy
+    if not df_historico.empty:
+        df_limpio = df_historico[df_historico['Fecha'] != str(hoy)]
+        df_actualizado = pd.concat([df_limpio, nuevas_filas], ignore_index=True)
     else:
-        st.info("Aún no tienes registros de esta semana.")
+        df_actualizado = nuevas_filas
 
-# Lógica de visualización (Domingo o Botón)
-es_domingo = hoy.weekday() == 6
+    # GUARDAR según el modo
+    try:
+        if modo_nube:
+            conn.update(worksheet="Configuración del Admin de Django", data=df_actualizado)
+            st.success("¡Sincronizado con Google Sheets! ✅")
+        else:
+            df_actualizado.to_csv("datos_habitos.csv", index=False)
+            st.success("¡Guardado en el archivo local! ✅")
+        st.balloons()
+    except Exception as e:
+        st.error(f"Error al guardar: {e}")
 
-if es_domingo:
-    st.header("¡Es Domingo! 🍎")
-    mostrar_resumen_semanal(df_historico)
-else:
-    with st.expander("Ver avance semanal anticipado"):
-        mostrar_resumen_semanal(df_historico)
-
-
-# Mostrar tabla de datos crudos (opcional)
-if st.sidebar.checkbox("Mostrar historial completo"):
-    st.sidebar.write(df_historico)
+# --- RESUMEN SEMANAL ---
+st.divider()
+with st.expander("Ver avance semanal"):
+    if not df_historico.empty:
+        df_stats = df_historico.copy()
+        df_stats['Fecha'] = pd.to_datetime(df_stats['Fecha'])
+        # Calculamos progreso semanal
+        semana_actual = hoy.isocalendar()[1]
+        df_stats['Semana'] = df_stats['Fecha'].dt.isocalendar().week
+        df_semana = df_stats[df_stats['Semana'] == semana_actual]
+        
+        if not df_semana.empty:
+            df_semana['Completado'] = df_semana['Completado'].astype(int)
+            resumen = df_semana.groupby(df_semana['Fecha'].dt.day_name())['Completado'].mean() * 100
+            st.bar_chart(resumen)
+        else:
+            st.write("Aún no hay datos de esta semana.")
+    else:
+        st.write("Registra tu primer día para ver estadísticas.")
