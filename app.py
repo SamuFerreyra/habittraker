@@ -5,7 +5,7 @@ from datetime import date
 import os
 
 st.set_page_config(page_title="Mi Habit Tracker Pro", page_icon="🔥")
-st.title("Habit Tracker con Memoria 🧠☁️")
+st.title("Habit Tracker ")
 
 # --- LISTA DE HÁBITOS ---
 habitos_lista = [
@@ -64,6 +64,18 @@ if st.button("Guardar mi día 📱"):
         st.balloons()
     except Exception as e:
         st.error(f"Error al guardar: {e}")
+        # Dentro del bloque: if st.button("Guardar mi día en la nube ☁️"):
+    try:
+        # Usamos el nombre exacto que le pongas a la pestaña abajo en el Excel
+        #    Si le pusiste "Hoja1", aquí debe decir "Hoja1"
+        conn.update(worksheet="Hoja1", data=df_actualizado) 
+        st.success("¡Guardado en la nube! 📱")
+        st.balloons()
+    except Exception as e:
+        st.error(f"Error al subir: {e}")
+        st.info("Asegúrate de que compartiste el Excel con el email de la Service Account como EDITOR.")
+    
+    
 
 # --- RESUMEN SEMANAL ---
 st.divider()
