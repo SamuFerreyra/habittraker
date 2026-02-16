@@ -10,7 +10,7 @@ st.title("Habit Tracker ")
 # --- LISTA DE HÁBITOS ---
 habitos_lista = [
     "Hacer ejercicio", "Leer", "Meditar", "Devocional", 
-    "Beber agua", "Estudiar", "Ayudar en la casa", "Trabajar", "Orar"
+    "Beber agua", "Estudiar", "Ayudar en la casa", "Trabajar", "Orar","No caer 🚫"
 ]
 
 # --- INTENTO DE CONEXIÓN ---
